@@ -5,4 +5,4 @@ Plan is now to use MPNet with the WCPFC corpus
 
 MPNET paper here [MPNet: Masked and Permuted Pre-training for Language Understanding](https://arxiv.org/abs/2004.09297)
 
-WCPFC CMM cxorpus is here [WCPFC CMMs](https://cmm.wcpfc.int/)
+WCPFC CMM corpus is here [WCPFC CMMs](https://cmm.wcpfc.int/)

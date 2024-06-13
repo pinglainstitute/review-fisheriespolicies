@@ -11,7 +11,7 @@ Step 4: Look at using different embeddings (langchain offers different embedding
 
 Step 5: Can look at using sematic search see below
 
-Step 5a: Alternatively, we could do something with symbolic AI combined with rQG, soem initatives to do this in the neurosymbolic AI community.
+Step 5a: Alternatively, we could do something with symbolic AI combined with RAG, soem initatives to do this in the neurosymbolic AI community.
 I've found two Pyt hon modules that would be useful
  
 ## symbolic AI

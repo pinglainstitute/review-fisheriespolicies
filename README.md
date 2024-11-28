@@ -3,16 +3,15 @@ Review of fisheries policies using LLM based semantic search
 
 Step 1: Obtain data [CMM corpus](https://cmm.wcpfc.int/)
 
-Step 2: Import to langcahin
+Step 2: Import to langcahin (Currently it uses FAIS as vector store)
 
 Step 3: Add to vector store
 
 Step 4: Look at using different embeddings (langchain offers different embedding models)
 
-Step 5: Can look at using sematic search see below
+Step 5: Can look at using semantic search see below (we haven't pursued this)
 
-Step 5a: Alternatively, we could do something with symbolic AI combined with RAG, soem initatives to do this in the neurosymbolic AI community.
-I've found two Pyt hon modules that would be useful
+Step 5a: Alternatively, we could do something with symbolic AI combined with RAG, some initatives to do this in the neurosymbolic AI community. I've found two Python modules that would be useful see below.
  
 ## symbolic AI
 

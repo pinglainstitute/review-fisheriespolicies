@@ -25,7 +25,7 @@ Langchain supports different LLM engines, e.g. OpenAI, Llama, etc.
 
 ## Semantic search
 
-Plan is now to use MPNet with the WCPFC corpus or alternatively a RAG model.
+Plan is now to use MPNet with the WCPFC corpus or alternatively a RAG model, currently we have the RAG model, it needs improvement and to add reasoning. We may oersue semantic search later. 
 
 MPNET paper here [MPNet: Masked and Permuted Pre-training for Language Understanding](https://arxiv.org/abs/2004.09297)
 

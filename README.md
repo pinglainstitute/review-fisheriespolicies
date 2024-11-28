@@ -1,5 +1,5 @@
-# Neurosymbolic RAG model with reasoning for the WPCFC conservation managemetn measures for tuna and tuna like fisheries in the WCPO 
-Review of fisheries policies using LLM based semantic search
+# Neurosymbolic RAG model with reasoning for the WPCFC conservation management measures for tuna and tuna like fisheries in the WCPO 
+
 
 Step 1: Obtain data [CMM corpus](https://cmm.wcpfc.int/)
 

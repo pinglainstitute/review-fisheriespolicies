@@ -17,7 +17,7 @@ Step 5a: Alternatively, we could do something with symbolic AI combined with RAG
 
 [Symbolic AI Python moduel](https://pypi.org/project/symbolicai/)
 
-[PyReason](https://github.com/lab-v2/pyreason)
+[PyReason](https://github.com/lab-v2/pyreason) also [Read the docs](https://pyreason.readthedocs.io/en/latest/)
 
 These can be combined with LLM 
 

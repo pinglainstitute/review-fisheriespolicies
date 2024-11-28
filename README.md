@@ -1,7 +1,7 @@
 # review-fisheriespolicies
 Review of fisheries policies using LLM based semantic search
 
-Step 1: Obtain data [CCM corpus](https://cmm.wcpfc.int/)
+Step 1: Obtain data [CMM corpus](https://cmm.wcpfc.int/)
 
 Step 2: Import to langcahin
 

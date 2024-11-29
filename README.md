@@ -3,7 +3,7 @@
 
 Step 1: Obtain data [CMM corpus](https://cmm.wcpfc.int/)
 
-Step 2: Import to langcahin (Currently it uses FAIS as vector store)
+Step 2: Import to langchain (Currently it uses FAIS as vector store)
 
 Step 3: Add to vector store
 

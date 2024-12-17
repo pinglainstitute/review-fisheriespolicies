@@ -37,7 +37,7 @@ Step 5a: Alternatively, we could do something with symbolic AI combined with RAG
  
 ### symbolic AI
 
-[Symbolic AI Python moduel](https://pypi.org/project/symbolicai/)
+[Symbolic AI Python module](https://pypi.org/project/symbolicai/)
 
 [PyReason](https://github.com/lab-v2/pyreason) also [Read the docs](https://pyreason.readthedocs.io/en/latest/)
 

@@ -2,7 +2,7 @@ streamlit==1.25.0
 symbolicai==0.7.0
 google-auth==2.20.0
 google-api-python-client==2.92.0
-langchain==0.0.320
+langchain==0.0.329 # upgrade due to security vulnerabilities
 openai==1.13.3
 PyPDF2==3.0.1
 python-dotenv==1.0.0

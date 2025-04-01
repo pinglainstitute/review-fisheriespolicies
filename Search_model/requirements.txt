@@ -1,6 +1,5 @@
 streamlit==1.25.0
-symbolicai==0.7.0
-google-auth==2.20.0
+google-auth==2.30.0
 google-api-python-client==2.92.0
 langchain==0.0.329 # uograded to 0.0.329 from 0.0.320 due to a security issue
 openai==1.13.3

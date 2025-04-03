@@ -47,7 +47,7 @@ def get_conversational_chain():
     Answer:
     """
 
-    model = ChatGoogleGenerativeAI(model="gemini-1.5-pro-002", temperature=0.6) #gemini-pro replaced not supported
+    model = ChatGoogleGenerativeAI(model="gemini-1.5-pro-002", temperature=1.2) #gemini-pro replaced not supported temp 0.6 try 0.2
 
     prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
     chain = load_qa_chain(model, chain_type="stuff", prompt=prompt)
@@ -71,14 +71,15 @@ def user_input(user_question):
     st.write("Reply: ", response.get("output_text", "No output found."))
 
 def main():
-    st.set_page_config("Chat PDF")
-    st.header("Chat with PDF using Gemini💁")
+    st.set_page_config("🐟")
+    st.title("AI Fisheries Manager 🐟")
+    st.image("https://pingla.org.au/images/Pingala_Logo_option_7.png")
 
-    user_question = st.text_input("Ask a Question from the PDF Files")
+    user_question = st.text_input("Ask the fisheries manager a question")
 
     if user_question:
         user_input(user_question)
-
+    
     with st.sidebar:
         st.title("Menu:")
         pdf_docs = st.file_uploader("Upload your PDF Files and Click on the Submit & Process Button", accept_multiple_files=True)

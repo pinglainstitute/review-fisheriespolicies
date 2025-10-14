@@ -7,7 +7,7 @@ Obtain the PDF document of fisheries  Obtain data [CMM corpus](https://cmm.wcpfc
 
 Install the dependencies
 ```
-pip install -f Search_model/requirements.txt
+pip install -r Search_model/requirements.txt
 ```
 
 ## Run Application

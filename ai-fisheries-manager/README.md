@@ -2,6 +2,8 @@
 
 An intelligent document Q&A system for fisheries policy management, powered by Google Gemini AI and RAG (Retrieval-Augmented Generation).
 
+**Author:** Jiaming Yang
+
 ![Pingla Institute](https://pingla.org.au/images/Pingala_Logo_option_7.png)
 
 ## ✨ Features
@@ -117,9 +119,31 @@ Maximum output tokens is set to `4096`. Adjust if needed:
 - **chunk_size=2500**: Document chunk size
 - **chunk_overlap=300**: Overlap between chunks
 
-## 🤝 Contributing
+## 🌊 About This Project
 
-This project is part of MATH5836 coursework at UNSW. For team members:
+This is a critical applied research project addressing real-world fisheries management challenges in the **Western and Central Pacific Ocean (WCPO)** region, which accounts for approximately **25% of the global ocean area** (as of 2021).
+
+### Why This Matters
+
+This project tackles **real-world problems** that practitioners face **daily**. The WCPO fisheries management framework requires constant reference to complex policy documents, making this AI-powered system highly valuable for:
+
+- Policy researchers and analysts
+- Fisheries managers and administrators  
+- Environmental compliance officers
+- Legal advisors in maritime law
+
+### Current Focus
+
+The project is currently in the **comparison, evaluation, and optimization phase** of existing methodologies, focusing on:
+
+- Benchmarking different RAG approaches
+- Evaluating retrieval accuracy and answer quality
+- Optimizing response time and relevance
+- Refining citation and source attribution
+
+### 🤝 Contributing
+
+For team members and collaborators:
 
 1. Read `PROJECT_FILES.md` for detailed file documentation
 2. Never commit `.env` or API keys
@@ -152,13 +176,11 @@ pkill -f "launch_streamlit.py"
 
 ## 📧 Contact
 
-For questions or issues, please contact the project team.
+For questions, collaborations, or implementation inquiries, please contact the project team.
 
-## 📜 License
-
-This project is for educational purposes as part of MATH5836 at UNSW.
+**Author:** Jiaming Yang
 
 ---
 
-**Built with ❤️ for sustainable fisheries management**
+**Built with ❤️ for sustainable fisheries management in the Western and Central Pacific Ocean**
 

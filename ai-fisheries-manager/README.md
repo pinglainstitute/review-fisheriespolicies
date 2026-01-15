@@ -33,30 +33,24 @@ This script will:
 
 ### Manual Setup
 
-1. **Clone the repository**
-```bash
-git clone <your-repo-url>
-cd optimized_versio_byJiaming
-```
-
-2. **Create virtual environment**
+1. **Create virtual environment**
 ```bash
 python3 -m venv llm
 source llm/bin/activate  # On Windows: llm\Scripts\activate
 ```
 
-3. **Install dependencies**
+2. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Configure API key**
+3. **Configure API key**
 ```bash
 cp env.example .env
 # Edit .env and add your API key
 ```
 
-5. **Run the application**
+4. **Run the application**
 ```bash
 ./llm/bin/python launch_streamlit.py
 ```

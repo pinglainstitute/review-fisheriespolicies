@@ -1,5 +1,6 @@
-# RAG for the WPCFC conservation management measures 
-### Streamlit Application to Query documents for tuna and tuna like fisheries in the WCPO 
+# RAG for WPCFC conservation management
+
+A repository for a Streamlit Application to Query documents for tuna and tuna like fisheries in the WCPO 
 
 
 ## Run V1.0 Application

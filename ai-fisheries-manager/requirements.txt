@@ -9,6 +9,9 @@ langchain-community==0.2.12
 langchain-google-genai==1.0.10
 google-generativeai==0.7.2
 
+# ---- Token counting ----
+tiktoken>=0.5.2
+
 # ---- Vector store ----
 faiss-cpu>=1.7.4
 

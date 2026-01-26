@@ -1,4 +1,5 @@
 # llm2_updated.py
+# llm2_updated.py
 import os
 import shutil
 import time
@@ -45,6 +46,107 @@ FEEDBACK_FILE = "feedback_data.json"  # File to store user feedback
 PARAMS_CONFIG_FILE = "system_params.json"  # File to store system configuration
 EMBED_MODEL = "models/text-embedding-004"   # Note: include "models/" prefix
 
+# ---------- Simple Authentication / Login ----------
+
+def _load_user_credentials() -> Dict[str, Dict[str, str]]:
+    """
+    Load user credentials from environment variables.
+
+    This is deliberately simple for a demo deployment:
+    - APP_USERS: optional JSON string mapping username -> {"password": "...", "role": "..."}
+      e.g. APP_USERS='{"demo": {"password": "demo123", "role": "user"}, "admin": {"password": "secret", "role": "admin"}}'
+    - If APP_USERS is not set, fall back to single user:
+      APP_USERNAME / APP_PASSWORD / APP_ROLE (optional)
+    """
+    users_env = os.getenv("APP_USERS")
+    users: Dict[str, Dict[str, str]] = {}
+
+    if users_env:
+        try:
+            parsed = json.loads(users_env)
+            # Normalize to dict[str, {"password": str, "role": str}]
+            for username, data in parsed.items():
+                if isinstance(data, dict) and "password" in data:
+                    users[username] = {
+                        "password": str(data.get("password", "")),
+                        "role": str(data.get("role", "user")),
+                    }
+        except Exception:
+            # If JSON is invalid, fall back to single-user mode
+            pass
+
+    if not users:
+        username = os.getenv("APP_USERNAME", "demo")
+        password = os.getenv("APP_PASSWORD", "demo123")
+        role = os.getenv("APP_ROLE", "user")
+        users[username] = {"password": password, "role": role}
+
+    return users
+
+
+def authenticate_user(username: str, password: str) -> Optional[Dict[str, str]]:
+    """Return user record (including role) if credentials are valid, else None."""
+    users = _load_user_credentials()
+    record = users.get(username)
+    if not record:
+        return None
+    if password != record.get("password"):
+        return None
+    return {"username": username, "role": record.get("role", "user")}
+
+
+def require_login():
+    """
+    Simple login gate in front of the main app.
+
+    - Shows a dedicated login screen when user is not authenticated
+    - On success, stores {"is_authenticated": True, "username": ..., "role": ...}
+      in st.session_state["auth"] and re-runs the app so the main UI appears.
+    - Includes a small note about this being a demo-grade auth layer.
+    """
+    if "auth" not in st.session_state:
+        st.session_state["auth"] = {
+            "is_authenticated": False,
+            "username": None,
+            "role": None,
+        }
+
+    auth_state = st.session_state["auth"]
+    if auth_state.get("is_authenticated"):
+        return  # Already logged in
+
+    st.title("AI Fisheries Manager – Login")
+    st.write(
+        "This demo is protected by a simple username/password login. "
+        "Credentials are configured via environment variables."
+    )
+
+    username = st.text_input("Username", key="login_username")
+    password = st.text_input("Password", type="password", key="login_password")
+
+    col_login, col_info = st.columns([1, 2])
+    with col_login:
+        if st.button("Log in", type="primary", key="login_button"):
+            user = authenticate_user(username.strip(), password)
+            if user:
+                st.session_state["auth"] = {
+                    "is_authenticated": True,
+                    "username": user["username"],
+                    "role": user["role"],
+                }
+                st.success(f"Welcome, {user['username']}!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+    with col_info:
+        st.caption(
+            "For production use, replace this with a stronger auth mechanism "
+            "(e.g. SSO / OAuth2, reverse-proxy auth, or Streamlit's enterprise features)."
+        )
+
+    # Stop rendering the rest of the app while not authenticated
+    st.stop()
+
 # ---------- Token counting ----------
 # Initialize tokenizer (using cl100k_base which is close to Gemini's tokenization)
 _tokenizer = None
@@ -83,9 +185,9 @@ def expand_query(query: str) -> List[str]:
         'longline': ['long line', 'long-line'],
         'fresh fish': ['fresh catch', 'freshly caught fish'],
     }
-    
+
     expanded_queries = [query]  # Original query first
-    
+
     # Add variations
     query_lower = query.lower()
     for term, synonyms in expansions.items():
@@ -94,13 +196,13 @@ def expand_query(query: str) -> List[str]:
                 expanded = query_lower.replace(term, synonym)
                 if expanded != query_lower:
                     expanded_queries.append(expanded)
-    
+
     # Also try with common connectors
     if len(expanded_queries) == 1:
         # If no expansions found, try adding common terms
         expanded_queries.append(f"{query} policy")
         expanded_queries.append(f"{query} regulation")
-    
+
     return expanded_queries[:3]  # Limit to 3 variations
 
 def rerank_documents(query: str, docs: List, top_k: int = 10) -> List:
@@ -110,10 +212,10 @@ def rerank_documents(query: str, docs: List, top_k: int = 10) -> List:
     """
     if not docs:
         return []
-    
+
     try:
         from sentence_transformers import CrossEncoder
-        
+
         # Initialize cross-encoder (lightweight model) - lazy loading
         if not hasattr(rerank_documents, 'model'):
             try:
@@ -122,32 +224,32 @@ def rerank_documents(query: str, docs: List, top_k: int = 10) -> List:
                 # If model download fails, disable re-ranking for this session
                 rerank_documents.model = None
                 return docs[:top_k]
-        
+
         # If model failed to load, skip re-ranking
         if rerank_documents.model is None:
             return docs[:top_k]
-        
+
         # Limit document content length to avoid memory issues
         max_content_len = 1000
         pairs = []
         for doc in docs:
             content = doc.page_content[:max_content_len] if len(doc.page_content) > max_content_len else doc.page_content
             pairs.append([query, content])
-        
+
         # Get scores
         try:
             scores = rerank_documents.model.predict(pairs)
         except Exception as e:
             # If prediction fails, return original order
             return docs[:top_k]
-        
+
         # Sort by score (descending)
         scored_docs = list(zip(docs, scores))
         scored_docs.sort(key=lambda x: x[1], reverse=True)
-        
+
         # Return top-k re-ranked documents
         return [doc for doc, score in scored_docs[:top_k]]
-    
+
     except ImportError:
         # Fallback: return original order if sentence-transformers not available
         return docs[:top_k]
@@ -158,7 +260,7 @@ def rerank_documents(query: str, docs: List, top_k: int = 10) -> List:
 # ---------- Feedback Collection and Parameter Optimization ----------
 def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_value: int, feedback_type: str = "rating"):
     """Save user feedback to a JSON file
-    
+
     Args:
         question: User's question
         answer: System's answer
@@ -174,7 +276,7 @@ def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_val
                     feedback_data = json.load(f)
             except:
                 feedback_data = []
-        
+
         entry = {
             "question": question,
             "answer": answer[:500],  # Limit answer length
@@ -183,13 +285,13 @@ def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_val
             "feedback_type": feedback_type,
             "timestamp": datetime.now().isoformat()
         }
-        
+
         feedback_data.append(entry)
-        
+
         # Save to file
         with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
             json.dump(feedback_data, f, indent=2, ensure_ascii=False)
-        
+
         return True
     except Exception as e:
         st.warning(f"Failed to save feedback: {str(e)}")
@@ -210,12 +312,12 @@ def analyze_feedback():
     feedback_data = load_feedback_data()
     if not feedback_data:
         return None
-    
+
     # Calculate average rating
     ratings = [f['feedback_value'] for f in feedback_data if f.get('feedback_type') == 'rating']
     thumbs_up = sum(1 for f in feedback_data if f.get('feedback_type') == 'thumbs' and f.get('feedback_value') == 1)
     thumbs_down = sum(1 for f in feedback_data if f.get('feedback_type') == 'thumbs' and f.get('feedback_value') == 0)
-    
+
     stats = {
         "total_feedback": len(feedback_data),
         "average_rating": sum(ratings) / len(ratings) if ratings else None,
@@ -223,7 +325,7 @@ def analyze_feedback():
         "thumbs_down": thumbs_down,
         "positive_rate": (thumbs_up / (thumbs_up + thumbs_down)) if (thumbs_up + thumbs_down) > 0 else None
     }
-    
+
     return stats
 
 def get_optimized_params():
@@ -237,11 +339,11 @@ def get_optimized_params():
             "temperature": 1.1,
             "max_context_tokens": 6000
         }
-    
+
     # Analyze feedback to identify patterns
     positive_count = 0
     negative_count = 0
-    
+
     for entry in feedback_data:
         if entry.get('feedback_type') == 'rating':
             if entry.get('feedback_value', 0) >= 4:
@@ -253,7 +355,7 @@ def get_optimized_params():
                 positive_count += 1
             else:
                 negative_count += 1
-    
+
     # Adjust parameters based on feedback rate
     total_feedback = len(feedback_data)
     if total_feedback < 5:
@@ -264,9 +366,9 @@ def get_optimized_params():
             "temperature": 1.1,
             "max_context_tokens": 6000
         }
-    
+
     positive_rate = positive_count / total_feedback
-    
+
     # If positive feedback rate is low (<50%), increase retrieval count and diversity
     if positive_rate < 0.5:
         return {
@@ -304,7 +406,7 @@ def save_system_params(params: Dict):
 
 def load_system_params():
     """Load system parameters (from config file or optimized based on feedback)
-    
+
     Strategy:
     1. If config file exists and feedback data has less than 5 entries, use saved parameters
     2. If feedback data has >= 5 entries, re-optimize parameters based on feedback
@@ -313,14 +415,14 @@ def load_system_params():
     try:
         feedback_data = load_feedback_data()
         feedback_count = len(feedback_data) if feedback_data else 0
-        
+
         # If there's enough feedback data (>=5 entries), optimize parameters based on feedback
         if feedback_count >= 5:
             optimized_params = get_optimized_params()
             # Save optimized parameters
             save_system_params(optimized_params)
             return optimized_params
-        
+
         # If config file exists but feedback is insufficient, use saved parameters
         if os.path.exists(PARAMS_CONFIG_FILE):
             with open(PARAMS_CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -328,7 +430,7 @@ def load_system_params():
                 return saved_params
     except Exception as e:
         st.warning(f"Failed to load system params: {str(e)}")
-    
+
     # Return default parameters or optimized parameters
     default_params = get_optimized_params()
     save_system_params(default_params)  # Save default parameters
@@ -346,7 +448,7 @@ def add_to_history(question: str, answer: str, sources: List[Tuple], timing_info
     """Add question-answer pair to conversation history"""
     if 'conversation_history' not in st.session_state:
         init_conversation_history()
-    
+
     entry = {
         "question": question,
         "answer": answer,
@@ -354,9 +456,9 @@ def add_to_history(question: str, answer: str, sources: List[Tuple], timing_info
         "timing_info": timing_info,
         "timestamp": datetime.now().isoformat()
     }
-    
+
     st.session_state.conversation_history.append(entry)
-    
+
     # Limit history size, only keep the most recent N turns
     if len(st.session_state.conversation_history) > CONVERSATION_HISTORY_LIMIT:
         st.session_state.conversation_history = st.session_state.conversation_history[-CONVERSATION_HISTORY_LIMIT:]
@@ -365,20 +467,20 @@ def get_recent_context(max_turns: int = 3) -> str:
     """Get recent conversation context to enhance query"""
     if 'conversation_history' not in st.session_state:
         return ""
-    
+
     history = st.session_state.conversation_history[-max_turns:]
     if not history:
         return ""
-    
+
     context_parts = []
     for entry in history:
         context_parts.append(f"Q: {entry['question']}\nA: {entry['answer']}")
-    
+
     return "\n\n".join(context_parts)
 
 def build_enhanced_query(user_question: str, include_history: bool = True) -> str:
     """Build enhanced query that includes historical context
-    
+
     Strategy:
     1. If question contains pronouns or reference words (like "this policy", "above"), extract key info from history
     2. Otherwise, mainly use current question for retrieval
@@ -386,27 +488,27 @@ def build_enhanced_query(user_question: str, include_history: bool = True) -> st
     """
     if not include_history:
         return user_question
-    
+
     # Check if question contains pronouns or reference words
     reference_words = ['this', 'that', 'these', 'those', 'it', 'they', 'above', 'previous', 'earlier', 'mentioned', 'same']
     question_lower = user_question.lower()
     has_reference = any(word in question_lower for word in reference_words)
-    
+
     if has_reference and 'conversation_history' in st.session_state and len(st.session_state.conversation_history) > 0:
         # Extract key entities and topic words from recent conversation
         recent_entry = st.session_state.conversation_history[-1]
-        
+
         # Extract keywords from recent question (remove stop words)
         recent_question = recent_entry['question']
         # Extract nouns and important words (simple approach: words longer than 4 chars or important terms)
         recent_words = [w for w in recent_question.split() if len(w) > 4 or w.lower() in ['cmm', 'cmmo', 'fao', 'un', 'tuna', 'fish']]
-        
+
         # If recent question has relevant keywords, use them to enhance query
         if recent_words:
             context_keywords = ' '.join(recent_words[:3])  # Maximum 3 keywords
             enhanced_query = f"{context_keywords} {user_question}"
             return enhanced_query.strip()
-    
+
     # By default, use original question
     return user_question
 
@@ -414,14 +516,14 @@ def build_enhanced_query(user_question: str, include_history: bool = True) -> st
 def format_sources(sources):
     """
     Format sources display, use concise format if all from same file.
-    
+
     Examples:
     Single file: compiled-conservation-measures-and-resolutions.pdf (p.41, p.38, p.52)
     Multiple files: doc1.pdf (p.1, p.2), doc2.pdf (p.5, p.6)
     """
     if not sources:
         return ""
-    
+
     # Group by file name
     file_pages = {}
     for source, page in sources:
@@ -429,7 +531,7 @@ def format_sources(sources):
         if file_name not in file_pages:
             file_pages[file_name] = []
         file_pages[file_name].append(page)
-    
+
     # Format page numbers for each file
     formatted_parts = []
     for file_name, pages in file_pages.items():
@@ -438,7 +540,7 @@ def format_sources(sources):
         # Format as p.1, p.2, p.3
         page_str = ", ".join([f"p.{p}" for p in pages])
         formatted_parts.append(f"{file_name} ({page_str})")
-    
+
     return ", ".join(formatted_parts)
 
 # ---------- Document Metadata Management ----------
@@ -447,7 +549,7 @@ def save_document_metadata(pdf_files, page_count, chunk_count, processed_time=No
     try:
         # Make sure index directory exists
         os.makedirs(INDEX_DIR, exist_ok=True)
-        
+
         # Build metadata
         metadata = {
             "processed_time": processed_time or datetime.now().isoformat(),
@@ -455,7 +557,7 @@ def save_document_metadata(pdf_files, page_count, chunk_count, processed_time=No
             "chunk_count": chunk_count,
             "documents": []
         }
-        
+
         # Add information for each document
         for pdf_file in pdf_files:
             file_name = getattr(pdf_file, "name", "uploaded.pdf")
@@ -464,11 +566,11 @@ def save_document_metadata(pdf_files, page_count, chunk_count, processed_time=No
                 "name": file_name,
                 "size_mb": round(file_size / (1024 * 1024), 2) if file_size > 0 else 0
             })
-        
+
         # Save to JSON file
         with open(METADATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
+
         return True
     except Exception as e:
         st.warning(f"Failed to save document metadata: {str(e)}")
@@ -544,7 +646,7 @@ def get_docs_with_meta(pdf_files):
 def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
     """
     Enhanced retrieval with query expansion, MMR diversity, and re-ranking.
-    
+
     Steps:
     1. Query expansion for better recall
     2. Initial retrieval with similarity scoring
@@ -554,11 +656,11 @@ def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
     try:
         # Step 1: Query expansion
         expanded_queries = expand_query(query)
-        
+
         # Step 2: Retrieve candidates from all query variations
         all_candidates = []
         seen_content = set()
-        
+
         for expanded_query in expanded_queries:
             # Get initial candidates with scores
             pairs = vs.similarity_search_with_score(expanded_query, k=20)
@@ -568,16 +670,16 @@ def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
                 if content_hash not in seen_content:
                     seen_content.add(content_hash)
                     all_candidates.append((doc, score))
-        
+
         # Sort all candidates by score (lower score = more similar)
         all_candidates.sort(key=lambda x: x[1])
-        
+
         # Step 3: Apply MMR for diversity (use top candidates as fetch_k)
         fetch_k = min(30, len(all_candidates))
         if fetch_k > 0:
             # Get top candidates for MMR
             top_candidates = [doc for doc, _ in all_candidates[:fetch_k]]
-            
+
             # Apply MMR on top candidates
             try:
                 mmr_docs = vs.max_marginal_relevance_search(
@@ -588,7 +690,7 @@ def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
                 mmr_docs = top_candidates[:k]
         else:
             mmr_docs = []
-        
+
         # Step 4: Re-rank with cross-encoder for better precision
         if mmr_docs:
             try:
@@ -599,7 +701,7 @@ def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
         else:
             # Fallback: use top candidates if MMR returned empty
             final_docs = [doc for doc, _ in all_candidates[:k]] if all_candidates else []
-        
+
         return final_docs if final_docs else []
 
     except Exception as e:
@@ -609,38 +711,38 @@ def robust_retrieve(vs, query, k=10, mmr_lambda=0.2):
         except Exception:
             # Last resort: return empty list
             return []
-    
+
 def answer_question(vs, user_question: str, conversation_history: List = None):
 
     """More robust retrieval + structured LLM answer generation + citation markup
-    
+
     Args:
         vs: Vector store
         user_question: Current user question
         conversation_history: List of previous conversation entries (optional)
     """
-    
+
     # Record start time
     start_time = time.time()
     retrieval_start = time.time()
-    
+
     # Load optimized system parameters
     system_params = load_system_params()
     retrieval_k = system_params.get("retrieval_k", 10)
     mmr_lambda = system_params.get("mmr_lambda", 0.2)
     max_context_tokens = system_params.get("max_context_tokens", 6000)
     temperature = system_params.get("temperature", 1.1)
-    
+
     # Build enhanced query (includes historical context)
     enhanced_query = build_enhanced_query(user_question, include_history=True)
-    
+
     # Use enhanced query and optimized parameters for retrieval
     docs = robust_retrieve(vs, enhanced_query, k=retrieval_k, mmr_lambda=mmr_lambda)
     retrieval_time = time.time() - retrieval_start
 
     # Build context and add source information
     blocks, used = [], []
-    
+
     if not docs:
         st.warning("No documents retrieved for this query.")
         # If no documents retrieved, return directly
@@ -657,22 +759,22 @@ def answer_question(vs, user_question: str, conversation_history: List = None):
     # Use optimized parameters
     total_tokens = 0
     truncated_count = 0
-    
+
     for i, d in enumerate(docs, 1):
         src = d.metadata.get("source", "PDF")
         pg  = d.metadata.get("page", "?")
         block = f"[S{i} | {src} p.{pg}]\n{d.page_content.strip()}"
         block_tokens = count_tokens(block)
-        
+
         # Check if adding this block would exceed token limit
         if total_tokens + block_tokens > max_context_tokens:
             truncated_count = len(docs) - i
             break
-        
+
         blocks.append(block)
         used.append((src, pg))
         total_tokens += block_tokens
-    
+
     # Warn user if truncation occurred
     if truncated_count > 0:
         st.warning(f"Context truncated: {truncated_count} document chunk(s) omitted to fit token limit ({total_tokens}/{max_context_tokens} tokens used).")
@@ -687,21 +789,21 @@ def answer_question(vs, user_question: str, conversation_history: List = None):
         history_parts = []
         history_tokens = 0
         MAX_HISTORY_TOKENS = 500  # Reserve maximum 500 tokens for conversation history
-        
+
         for entry in reversed(recent_history):  # From most recent to oldest
             q_text = entry['question']
             a_text = entry['answer'][:300]  # Limit answer length to avoid being too long
-            
+
             history_entry = f"Previous Q: {q_text}\nPrevious A: {a_text[:300]}..."
             entry_tokens = count_tokens(history_entry)
-            
+
             # If adding this history entry would exceed limit, stop adding
             if history_tokens + entry_tokens > MAX_HISTORY_TOKENS:
                 break
-            
+
             history_parts.insert(0, history_entry)  # Maintain chronological order
             history_tokens += entry_tokens
-        
+
         if history_parts:
             conversation_context = "\n\nPrevious conversation:\n" + "\n\n".join(history_parts) + "\n"
 
@@ -710,7 +812,7 @@ def answer_question(vs, user_question: str, conversation_history: List = None):
     history_instruction = ""
     if conversation_context:
         history_instruction = "Consider the previous conversation context when answering. If the current question refers to something mentioned earlier (using words like 'this', 'that', 'above', 'previous'), use the conversation history to understand what is being referred to.\n\n"
-    
+
     prompt = f"""
 You are an expert fisheries policy assistant.
 Use ONLY the context below. If the context contains relevant facts, answer concisely and cite sources like [S1], [S2] at the end of sentences derived from them.
@@ -727,7 +829,7 @@ Answer (with citations):
 
     # Record start time for answer generation
     generation_start = time.time()
-    
+
     # Call Gemini model to generate answer (using optimized temperature)
     model = genai.GenerativeModel("gemini-2.5-flash")
     resp = model.generate_content(
@@ -741,11 +843,11 @@ Answer (with citations):
     answer = (getattr(resp, "text", "") or "").strip()
     if not answer:
         answer = "I don't know."
-    
+
     # Calculate generation time
     generation_time = time.time() - generation_start
     total_time = time.time() - start_time
-    
+
     # If answer not found, show most relevant sections
     if answer.strip() == "I don't know." and used:
         hints = [f"• {s or 'PDF'} p.{p}" for s,p in used[:3]]
@@ -792,47 +894,47 @@ def build_or_load_vector_store(_documents=None):
         try:
             total_chunks = len(_documents)
             # Note: Don't display UI elements inside cached function, display before calling function instead
-            
+
             # Reduce batch size and increase intermediate save frequency to avoid timeouts and API rate limits
             BATCH_SIZE = 20  # Reduce batch size to lower API call pressure
             SAVE_INTERVAL = 3  # Save every 3 batches to avoid losing progress
             API_DELAY = 1.0  # Delay between API calls (in seconds) to avoid rate limits
-            
+
             vs = None
             processed_count = 0
-            
+
             # Create progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
             time_text = st.empty()
-            
+
             start_time = time.time()
-            
+
             for batch_start in range(0, total_chunks, BATCH_SIZE):
                 batch_end = min(batch_start + BATCH_SIZE, total_chunks)
                 batch_docs = _documents[batch_start:batch_end]
-                
+
                 # Update progress
                 progress = (batch_end / total_chunks)
                 progress_bar.progress(progress)
                 elapsed_time = time.time() - start_time
                 estimated_total = elapsed_time / progress if progress > 0 else 0
                 remaining_time = estimated_total - elapsed_time
-                
+
                 status_text.text(f"Processing chunks {batch_start + 1}-{batch_end} of {total_chunks}...")
                 time_text.text(f"Elapsed: {int(elapsed_time)}s | Estimated remaining: {int(remaining_time)}s")
-                
+
                 # API call retry mechanism
                 max_retries = 3
                 retry_count = 0
                 batch_success = False
-                
+
                 while retry_count < max_retries and not batch_success:
                     try:
                         # Add delay to avoid API rate limits (except first batch)
                         if batch_start > 0:
                             time.sleep(API_DELAY)
-                        
+
                         # Process current batch
                         if vs is None:
                             # First batch: create new index
@@ -843,10 +945,10 @@ def build_or_load_vector_store(_documents=None):
                             vs.merge_from(batch_index)
                             # Clear batch index to free memory
                             del batch_index
-                        
+
                         processed_count += len(batch_docs)
                         batch_success = True
-                        
+
                         # Periodically save intermediate results to avoid losing progress if connection drops
                         batch_number = (batch_start // BATCH_SIZE) + 1
                         if batch_number % SAVE_INTERVAL == 0 or batch_end >= total_chunks:
@@ -863,7 +965,7 @@ def build_or_load_vector_store(_documents=None):
                             except Exception as save_err:
                                 # Intermediate save failure doesn't affect main process, continue processing
                                 pass
-                        
+
                     except Exception as batch_error:
                         retry_count += 1
                         if retry_count < max_retries:
@@ -874,17 +976,17 @@ def build_or_load_vector_store(_documents=None):
                             st.warning(f"Failed to process batch {batch_start + 1}-{batch_end} after {max_retries} attempts: {str(batch_error)}")
                             # Continue processing next batch, don't interrupt entire process
                             break
-                
+
                 # Force refresh Streamlit interface to keep connection alive
                 if batch_start % (BATCH_SIZE * 2) == 0:
                     status_text.empty()
                     status_text.text(f"Processing chunks {batch_start + 1}-{batch_end} of {total_chunks}...")
-            
+
             # Complete progress bar
             progress_bar.progress(1.0)
             time_text.empty()
             status_text.text("Saving final index to disk...")
-            
+
             # Final save of index
             if vs is not None and processed_count > 0:
                 try:
@@ -905,7 +1007,7 @@ def build_or_load_vector_store(_documents=None):
             else:
                 st.error(f"Failed to build index: Only {processed_count}/{total_chunks} chunks were processed.")
                 return None
-                
+
         except Exception as e:
             st.error(f"Index building failed: {str(e)}")
             import traceback
@@ -918,11 +1020,35 @@ def build_or_load_vector_store(_documents=None):
 # ---------- Streamlit UI ----------
 def main():
     st.set_page_config(page_title="AI Fisheries Manager", page_icon=None)
+
+    # ---- Authentication gate (login page before main UI) ----
+    require_login()
+
+    # From here on, the user is authenticated
+    auth_state = st.session_state.get("auth", {})
+
     st.title("AI Fisheries Manager")
     st.image("https://pingla.org.au/images/Pingala_Logo_option_7.png", width=300)
 
     # Sidebar: upload and build index
     with st.sidebar:
+        # Show current user + logout control
+        if auth_state.get("is_authenticated"):
+            st.markdown(f"**Logged in as:** `{auth_state.get('username', '')}`")
+            role = auth_state.get("role")
+            if role:
+                st.caption(f"Role: {role}")
+            if st.button("Log out", key="logout_button"):
+                # Clear auth state and rerun to show login page
+                st.session_state["auth"] = {
+                    "is_authenticated": False,
+                    "username": None,
+                    "role": None,
+                }
+                st.rerun()
+
+        st.divider()
+
         st.header("Documents")
         pdf_docs = st.file_uploader(
             "Upload PDF files then click 'Submit & Process'",
@@ -943,7 +1069,7 @@ def main():
                             st.error("Failed to extract text content from PDFs.")
                         else:
                             st.success(f"Successfully extracted {len(raw_docs)} page(s)")
-                            
+
                             # Split documents
                             # Smaller chunks improve retrieval precision by focusing on single topics
                             splitter = RecursiveCharacterTextSplitter(
@@ -989,7 +1115,7 @@ def main():
                         st.error(f"Detailed error:\n```\n{traceback.format_exc()}\n```")
 
         st.divider()
-        
+
         # Display feedback statistics (if available)
         feedback_stats = analyze_feedback()
         if feedback_stats and feedback_stats.get("total_feedback", 0) > 0:
@@ -1001,10 +1127,10 @@ def main():
                 st.caption(f"Average rating: {feedback_stats['average_rating']:.2f}/5")
             st.caption(f"Total feedback: {feedback_stats['total_feedback']}")
             st.divider()
-        
+
         # More accurate index status check
         index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(os.path.join(INDEX_DIR, "index.faiss"))
-        
+
         # Display processed document information
         if index_exists:
             metadata = load_document_metadata()
@@ -1013,16 +1139,16 @@ def main():
                 doc_info = []
                 for doc in metadata.get("documents", []):
                     doc_info.append(f"• {doc['name']} ({doc.get('size_mb', 0)} MB)")
-                
+
                 if doc_info:
                     # Display document list (show max 3, show count if more exist)
                     display_count = min(3, len(doc_info))
                     for info in doc_info[:display_count]:
                         st.caption(info)
-                    
+
                     if len(doc_info) > display_count:
                         st.caption(f"... and {len(doc_info) - display_count} more document(s)")
-                    
+
                     # Display statistics
                     st.caption(f"{metadata.get('page_count', 0)} page(s) | {metadata.get('chunk_count', 0)} chunk(s)")
                 else:
@@ -1035,18 +1161,18 @@ def main():
     # Main area: Q&A
     # Check index status
     index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(os.path.join(INDEX_DIR, "index.faiss"))
-    
+
     # Initialize conversation history
     init_conversation_history()
-    
+
     # Create placeholder for displaying index build hint (will be cleared after answer is generated)
     if 'index_building_placeholder' not in st.session_state:
         st.session_state.index_building_placeholder = st.empty()
-    
+
     # Initialize input value (if not already)
     if 'user_question' not in st.session_state:
         st.session_state.user_question = ""
-    
+
     # Check if input box needs to be cleared (triggered by Clear button)
     # Must check and clear before creating widget
     if 'clear_input' in st.session_state and st.session_state.clear_input:
@@ -1055,7 +1181,7 @@ def main():
             del st.session_state.question_input
         st.session_state.user_question = ""
         st.session_state.clear_input = False  # Reset flag
-    
+
     # Use key parameter to ensure input box always displays
     # Note: When using key, value parameter is ignored, widget uses value from session_state
     user_q = st.text_input(
@@ -1063,11 +1189,11 @@ def main():
         key="question_input",
         placeholder="Enter your question here..."
     )
-    
+
     # Update value in session_state (for tracking)
     if user_q != st.session_state.user_question:
         st.session_state.user_question = user_q
-    
+
     # Add action buttons (clear input, clear history)
     col1, col2, col3 = st.columns([5, 1, 1])
     with col2:
@@ -1081,7 +1207,7 @@ def main():
             if 'conversation_history' in st.session_state:
                 st.session_state.conversation_history = []
             st.rerun()
-    
+
     # Display conversation history (if available)
     if 'conversation_history' in st.session_state and len(st.session_state.conversation_history) > 0:
         with st.expander(f"Conversation History ({len(st.session_state.conversation_history)} turns)", expanded=False):
@@ -1093,13 +1219,13 @@ def main():
                     src_text = format_sources(entry['sources'])
                     st.caption(f"Sources: {src_text}")
                 st.divider()
-    
+
     if user_q and user_q.strip():
         if not index_exists:
             st.warning("No index found. Please upload PDFs and click 'Submit & Process' first.")
             st.info("If you just processed documents, please wait for the index building to complete (you should see a success message).")
             return
-        
+
         with st.spinner("Retrieving & answering..."):
             vs = build_or_load_vector_store()  # Load existing index
             if vs is None:
@@ -1110,11 +1236,11 @@ def main():
                 if vs is None:
                     st.error("Failed to load index. Please rebuild the index by clicking 'Submit & Process' again.")
                 st.stop()
-                
+
             # Pass conversation history to answer_question
             conversation_history = st.session_state.get('conversation_history', [])
             answer, sources, timing_info = answer_question(vs, user_q, conversation_history)
-            
+
             # Add to conversation history
             add_to_history(user_q, answer, sources, timing_info)
 
@@ -1129,28 +1255,28 @@ def main():
         retrieval_time_str = f"{timing_info['retrieval_time']:.2f}s"
         generation_time_str = f"{timing_info['generation_time']:.2f}s"
         total_time_str = f"{timing_info['total_time']:.2f}s"
-        
+
         st.caption(f"**Time:** Retrieval: {retrieval_time_str} | Generation: {generation_time_str} | **Total: {total_time_str}**")
 
         if sources:
             src_text = format_sources(sources)
             st.caption(f"**Sources:** {src_text}")
-        
+
         # Add feedback buttons
         st.markdown("---")
         st.markdown("**Was this answer helpful?**")
-        
+
         # Use unique key to avoid duplicate submissions
         current_turn = len(st.session_state.get('conversation_history', []))
         feedback_saved_key = f"feedback_saved_{current_turn}"
-        
+
         # Check if feedback already submitted
         if feedback_saved_key not in st.session_state:
             st.session_state[feedback_saved_key] = False
-        
+
         # Use column layout for feedback buttons
         fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
-        
+
         if not st.session_state[feedback_saved_key]:
             with fb_col1:
                 feedback_key = f"thumbs_up_{current_turn}"

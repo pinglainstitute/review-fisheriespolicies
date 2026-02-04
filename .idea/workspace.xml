@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ChangeListManager">
+    <list default="true" id="dd729d11-e821-4b29-bdf9-edbebfd56d8d" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/review-fisheriespolicies-main.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/LICENSE" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/SETUP.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/Text_Extraction.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/GITHUB_CHECKLIST.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/PROJECT_FILES.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/credentials.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/env.example" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/launch_streamlit.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/Activate.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/activate.fish" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/dotenv" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/f2py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/jsondiff" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/langchain-server" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/langsmith" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pip" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pip3" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pip3.12" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pyrsa-keygen" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pyrsa-priv2pub" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/pyrsa-sign" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/streamlit" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/bin/streamlit.cmd" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm/pyvenv.cfg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/llm2_updated.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/requirements.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ai-fisheries-manager/setup_llm_env.sh" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 3
+}]]></component>
+  <component name="ProjectId" id="39CU6cRx1y67xPLSWBFolHmq8It" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "master",
+    "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "C:/Users/Vihaan/Downloads/review-fisheriespolicies-main-20260204T095806Z-3-001/review-fisheriespolicies-main",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-30f59d01ecdd-2fc7cc6b9a17-intellij.indexing.shared.core-IU-253.30387.90" />
+        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-IU-253.30387.90" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="dd729d11-e821-4b29-bdf9-edbebfd56d8d" name="Changes" comment="" />
+      <created>1770199373705</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1770199373705</updated>
+      <workItem from="1770199374862" duration="321000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+</project>

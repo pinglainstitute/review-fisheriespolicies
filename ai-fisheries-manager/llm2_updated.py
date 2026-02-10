@@ -47,33 +47,56 @@ PARAMS_CONFIG_FILE = "system_params.json"  # File to store system configuration
 EMBED_MODEL = "models/text-embedding-004"   # Note: include "models/" prefix
 
 # ---------- Simple Authentication / Login ----------
+CREDENTIALS_FILE = os.getenv(
+    "APP_USERS_FILE",
+    os.path.join(os.path.dirname(__file__), "credentials.json"),
+)
 
 def _load_user_credentials() -> Dict[str, Dict[str, str]]:
     """
-    Load user credentials from environment variables.
+    Load user credentials from a local JSON file or environment variables.
 
-    This is deliberately simple for a demo deployment:
-    - APP_USERS: optional JSON string mapping username -> {"password": "...", "role": "..."}
-      e.g. APP_USERS='{"demo": {"password": "demo123", "role": "user"}, "admin": {"password": "secret", "role": "admin"}}'
-    - If APP_USERS is not set, fall back to single user:
-      APP_USERNAME / APP_PASSWORD / APP_ROLE (optional)
+    Priority order (first valid source wins):
+    1) APP_USERS_FILE (default: ./credentials.json) containing:
+       - {"demo": {"password": "demo123", "role": "user"}}
+       - or {"users": {"demo": {"password": "demo123", "role": "user"}}}
+    2) APP_USERS: JSON string mapping username -> {"password": "...", "role": "..."}
+    3) APP_USERNAME / APP_PASSWORD / APP_ROLE (optional)
     """
-    users_env = os.getenv("APP_USERS")
     users: Dict[str, Dict[str, str]] = {}
 
-    if users_env:
+    if os.path.exists(CREDENTIALS_FILE):
         try:
-            parsed = json.loads(users_env)
-            # Normalize to dict[str, {"password": str, "role": str}]
-            for username, data in parsed.items():
-                if isinstance(data, dict) and "password" in data:
-                    users[username] = {
-                        "password": str(data.get("password", "")),
-                        "role": str(data.get("role", "user")),
-                    }
+            with open(CREDENTIALS_FILE, "r", encoding="utf-8") as handle:
+                parsed = json.load(handle)
+            if isinstance(parsed, dict) and "users" in parsed:
+                parsed = parsed.get("users", {})
+            if isinstance(parsed, dict):
+                for username, data in parsed.items():
+                    if isinstance(data, dict) and "password" in data:
+                        users[username] = {
+                            "password": str(data.get("password", "")),
+                            "role": str(data.get("role", "user")),
+                        }
         except Exception:
-            # If JSON is invalid, fall back to single-user mode
-            pass
+            # If file JSON is invalid, fall back to other sources
+            users = {}
+
+    if not users:
+        users_env = os.getenv("APP_USERS")
+        if users_env:
+            try:
+                parsed = json.loads(users_env)
+                # Normalize to dict[str, {"password": str, "role": str}]
+                for username, data in parsed.items():
+                    if isinstance(data, dict) and "password" in data:
+                        users[username] = {
+                            "password": str(data.get("password", "")),
+                            "role": str(data.get("role", "user")),
+                        }
+            except Exception:
+                # If JSON is invalid, fall back to single-user mode
+                pass
 
     if not users:
         username = os.getenv("APP_USERNAME", "demo")
@@ -118,7 +141,7 @@ def require_login():
     st.title("AI Fisheries Manager – Login")
     st.write(
         "This demo is protected by a simple username/password login. "
-        "Credentials are configured via environment variables."
+        "Credentials are configured via `credentials.json` or environment variables."
     )
 
     username = st.text_input("Username", key="login_username")

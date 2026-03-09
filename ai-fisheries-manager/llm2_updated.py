@@ -1019,7 +1019,7 @@ def build_or_load_vector_store(_documents=None):
 
 # ---------- Streamlit UI ----------
 def main():
-    st.set_page_config(page_title="AI Fisheries Manager", page_icon=None)
+    st.set_page_config(page_title="AI Fisheries Manager", page_icon="🐟")
 
     # ---- Authentication gate (login page before main UI) ----
     require_login()
@@ -1027,7 +1027,7 @@ def main():
     # From here on, the user is authenticated
     auth_state = st.session_state.get("auth", {})
 
-    st.title("AI Fisheries Manager")
+    st.title("AI Fisheries Manager :fish:")
     st.image("https://pingla.org.au/images/Pingala_Logo_option_7.png", width=300)
 
     # Sidebar: upload and build index

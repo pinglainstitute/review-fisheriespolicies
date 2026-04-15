@@ -1,52 +1,44 @@
 #!/usr/bin/env python
-"""Launch Streamlit application"""
+"""
+Launch the AI Fisheries Manager Streamlit application.
+
+Usage:
+  # Test mode (default) — interactive document upload, all features visible
+  python launch_streamlit.py
+
+  # Production mode — core docs pre-loaded from a directory
+  python launch_streamlit.py --mode production --docs-dir /path/to/core_pdfs
+"""
 import sys
 import os
-import json
-import time
+import argparse
 
-# region agent log
-_DBG_LOG_PATH = "/Users/onlytash/Downloads/review-fisheriespolicies-main/.cursor/debug.log"
-def _dbg(hypothesisId: str, location: str, message: str, data: dict):
-    try:
-        with open(_DBG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": hypothesisId,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-# endregion agent log
-
-# Fix OpenMP library conflict issue on macOS
-# Multiple libraries (faiss-cpu, sentence-transformers, numpy, etc.) may link different versions of OpenMP
-# Setting this environment variable allows the program to continue running (imperfect but necessary temporary solution)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
-# Switch to script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# Set parameters
-_dbg("H1", "launch_streamlit.py:pre-argv", "entry", {
-    "python": sys.executable,
-    "cwd": os.getcwd(),
-    "orig_argv": sys.argv[:],
-})
-sys.argv = ["streamlit", "run", "llm2_updated.py", "--server.port=8501"]
-_dbg("H1", "launch_streamlit.py:post-argv", "argv_overwritten", {
-    "new_argv": sys.argv[:],
-})
+parser = argparse.ArgumentParser(description="Launch AI Fisheries Manager")
+parser.add_argument("--docs-dir", type=str, default=None,
+                    help="Path to a directory of core PDF documents (production mode).")
+parser.add_argument("--mode", type=str, choices=["production", "test"], default="test",
+                    help="Deployment mode: 'production' or 'test' (default).")
+parser.add_argument("--port", type=int, default=8501,
+                    help="Streamlit server port (default 8501).")
+args = parser.parse_args()
 
-# Import and run streamlit CLI
+# Build the streamlit CLI argv, forwarding app-specific flags after '--'
+sys.argv = [
+    "streamlit", "run", "llm2_updated.py",
+    f"--server.port={args.port}",
+    "--",  # everything after this is passed to the app script
+    f"--mode={args.mode}",
+]
+if args.docs_dir:
+    sys.argv.append(f"--docs-dir={args.docs_dir}")
+
 from streamlit.web import cli as stcli
 
 if __name__ == '__main__':
-    _dbg("H1", "launch_streamlit.py:main", "calling_stcli_main", {"note": "about_to_start_streamlit_cli"})
     sys.exit(stcli.main())
 
 

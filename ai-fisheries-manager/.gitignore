@@ -24,8 +24,8 @@ ENV/
 # FAISS Index
 faiss_index/
 
-# Streamlit
-.streamlit/
+# Streamlit secrets (NEVER commit real secrets)
+.streamlit/secrets.toml
 streamlit.log
 
 # IDE

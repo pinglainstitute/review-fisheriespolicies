@@ -13,9 +13,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------- API Key Configuration ----------
-API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+# Support Streamlit Cloud secrets, .env file, and environment variables
+API_KEY = (
+    st.secrets.get("GOOGLE_API_KEY", None) if hasattr(st, "secrets") else None
+) or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not API_KEY:
-    st.error("API key is missing. Set GEMINI_API_KEY or GOOGLE_API_KEY in .env / env.")
+    st.error(
+        "API key is missing. Set GOOGLE_API_KEY in:\n"
+        "- Streamlit Cloud Secrets (for hosted deployment), or\n"
+        "- .env file / environment variable (for local development)"
+    )
     st.stop()
 
 os.environ["GOOGLE_API_KEY"] = API_KEY
@@ -41,30 +48,94 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 # from langchain.prompts import PromptTemplate
 
 INDEX_DIR = "faiss_index"
-METADATA_FILE = os.path.join(INDEX_DIR, "index_metadata.json")  # File to store index metadata
-FEEDBACK_FILE = "feedback_data.json"  # File to store user feedback
-PARAMS_CONFIG_FILE = "system_params.json"  # File to store system configuration
-EMBED_MODEL = "models/text-embedding-004"   # Note: include "models/" prefix
+METADATA_FILE = os.path.join(INDEX_DIR, "index_metadata.json")
+FEEDBACK_FILE = "feedback_data.json"
+PARAMS_CONFIG_FILE = "system_params.json"
+CREDENTIALS_FILE = "credentials.json"
+EMBED_MODEL = "models/text-embedding-004"
+
+# ---------- Hardwired Core Documents Directory ----------
+# Place your core PDF files in this folder. They will be loaded automatically
+# on startup without users needing to upload them.
+CORE_DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core_documents")
+
+# ---------- CLI Configuration ----------
+import argparse
+
+def parse_app_args():
+    """Parse command-line arguments passed after '--' in the streamlit run command."""
+    parser = argparse.ArgumentParser(description="AI Fisheries Manager")
+    parser.add_argument(
+        "--docs-dir",
+        type=str,
+        default=None,
+        help="Path to a directory of core PDF documents to load on startup (production mode).",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["production", "test"],
+        default="test",
+        help="Deployment mode: 'production' (hardwired docs, restricted user UI) or 'test' (full access).",
+    )
+    # Streamlit passes extra args; use parse_known_args to ignore them
+    args, _ = parser.parse_known_args()
+    return args
+
+APP_ARGS = parse_app_args()
 
 # ---------- Simple Authentication / Login ----------
 
 def _load_user_credentials() -> Dict[str, Dict[str, str]]:
     """
-    Load user credentials from environment variables.
-
-    This is deliberately simple for a demo deployment:
-    - APP_USERS: optional JSON string mapping username -> {"password": "...", "role": "..."}
-      e.g. APP_USERS='{"demo": {"password": "demo123", "role": "user"}, "admin": {"password": "secret", "role": "admin"}}'
-    - If APP_USERS is not set, fall back to single user:
-      APP_USERNAME / APP_PASSWORD / APP_ROLE (optional)
+    Load user credentials with the following priority:
+      1. credentials.json file in the working directory
+      2. APP_USERS environment variable (JSON string)
+      3. Individual APP_USERNAME / APP_PASSWORD / APP_ROLE env vars
     """
-    users_env = os.getenv("APP_USERS")
     users: Dict[str, Dict[str, str]] = {}
 
+    # Priority 1a: Streamlit Cloud secrets (APP_USERS key)
+    try:
+        secrets_users = st.secrets.get("APP_USERS", None)
+        if secrets_users:
+            parsed = json.loads(secrets_users) if isinstance(secrets_users, str) else dict(secrets_users)
+            for username, data in parsed.items():
+                data = dict(data) if not isinstance(data, dict) else data
+                if "password" in data:
+                    users[username] = {
+                        "password": str(data["password"]),
+                        "role": str(data.get("role", "user")),
+                    }
+    except Exception:
+        pass
+
+    if users:
+        return users
+
+    # Priority 1b: credentials.json file
+    if os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+                creds = json.load(f)
+            parsed = creds.get("users", creds)
+            for username, data in parsed.items():
+                if isinstance(data, dict) and "password" in data:
+                    users[username] = {
+                        "password": str(data["password"]),
+                        "role": str(data.get("role", "user")),
+                    }
+        except Exception:
+            pass
+
+    if users:
+        return users
+
+    # Priority 2: APP_USERS env var
+    users_env = os.getenv("APP_USERS")
     if users_env:
         try:
             parsed = json.loads(users_env)
-            # Normalize to dict[str, {"password": str, "role": str}]
             for username, data in parsed.items():
                 if isinstance(data, dict) and "password" in data:
                     users[username] = {
@@ -72,14 +143,16 @@ def _load_user_credentials() -> Dict[str, Dict[str, str]]:
                         "role": str(data.get("role", "user")),
                     }
         except Exception:
-            # If JSON is invalid, fall back to single-user mode
             pass
 
-    if not users:
-        username = os.getenv("APP_USERNAME", "demo")
-        password = os.getenv("APP_PASSWORD", "demo123")
-        role = os.getenv("APP_ROLE", "user")
-        users[username] = {"password": password, "role": role}
+    if users:
+        return users
+
+    # Priority 3: single-user fallback
+    username = os.getenv("APP_USERNAME", "admin")
+    password = os.getenv("APP_PASSWORD", "secret")
+    role = os.getenv("APP_ROLE", "admin")
+    users[username] = {"password": password, "role": role}
 
     return users
 
@@ -595,12 +668,9 @@ def get_docs_with_meta(pdf_files):
         name = getattr(f, "name", "uploaded.pdf")
 
         for i, page in enumerate(reader.pages):
-            # Extract and clean text
             raw_txt = page.extract_text() or ""
-            # Remove extra whitespace and line breaks, convert to single line
             txt = " ".join(raw_txt.split())
 
-            # Very short content is usually header/footer/empty page, skip it
             if len(txt) < 40:
                 continue
 
@@ -611,6 +681,99 @@ def get_docs_with_meta(pdf_files):
                 )
             )
     return docs
+
+
+def get_docs_from_directory(dir_path: str) -> List[Document]:
+    """Load all PDFs from a local directory and return Documents with metadata."""
+    import glob as glob_mod
+    docs = []
+    pdf_paths = sorted(glob_mod.glob(os.path.join(dir_path, "*.pdf")))
+    if not pdf_paths:
+        return docs
+    for pdf_path in pdf_paths:
+        try:
+            reader = PdfReader(pdf_path)
+            name = os.path.basename(pdf_path)
+            for i, page in enumerate(reader.pages):
+                raw_txt = page.extract_text() or ""
+                txt = " ".join(raw_txt.split())
+                if len(txt) < 40:
+                    continue
+                docs.append(
+                    Document(
+                        page_content=txt,
+                        metadata={"source": name, "page": i + 1},
+                    )
+                )
+        except Exception as e:
+            st.warning(f"Failed to read {os.path.basename(pdf_path)}: {e}")
+    return docs
+
+
+def _get_core_docs_dir() -> Optional[str]:
+    """
+    Determine the core documents directory.
+    Priority: 1) --docs-dir CLI argument  2) built-in CORE_DOCS_DIR folder
+    Returns the path if it exists and contains at least one PDF, else None.
+    """
+    import glob as glob_mod
+
+    # Priority 1: CLI argument
+    if APP_ARGS.docs_dir:
+        if os.path.isdir(APP_ARGS.docs_dir):
+            pdfs = glob_mod.glob(os.path.join(APP_ARGS.docs_dir, "*.pdf"))
+            if pdfs:
+                return APP_ARGS.docs_dir
+
+    # Priority 2: Hardwired core_documents/ folder next to this script
+    if os.path.isdir(CORE_DOCS_DIR):
+        pdfs = glob_mod.glob(os.path.join(CORE_DOCS_DIR, "*.pdf"))
+        if pdfs:
+            return CORE_DOCS_DIR
+
+    return None
+
+
+def load_core_documents_if_needed():
+    """
+    Load core PDFs from the hardwired core_documents/ directory (or --docs-dir)
+    and build the FAISS index on first run. Skips if index already exists.
+    Returns True if core docs were loaded/already present, False otherwise.
+    """
+    docs_dir = _get_core_docs_dir()
+    if not docs_dir:
+        return False
+
+    index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(
+        os.path.join(INDEX_DIR, "index.faiss")
+    )
+    if index_exists:
+        return True
+
+    st.info(f"Loading core documents from `{os.path.basename(docs_dir)}` ...")
+    raw_docs = get_docs_from_directory(docs_dir)
+    if not raw_docs:
+        st.warning("No PDF pages extracted from the core documents directory.")
+        return False
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1800,
+        chunk_overlap=250,
+        length_function=len,
+    )
+    chunks = splitter.split_documents(raw_docs)
+    st.info(f"Extracted {len(raw_docs)} pages → {len(chunks)} chunks. Building index...")
+
+    if os.path.isdir(INDEX_DIR):
+        shutil.rmtree(INDEX_DIR, ignore_errors=True)
+    build_or_load_vector_store.clear()
+    vs = build_or_load_vector_store(chunks)
+    if vs is None:
+        st.error("Failed to build index from core documents.")
+        return False
+
+    st.success(f"Core document index ready ({len(chunks)} chunks).")
+    return True
 
 # def answer_question(vs, user_question: str):
 #     """Similarity search + Gemini 2.5 Flash (optional Thinking)"""
@@ -1018,28 +1181,156 @@ def build_or_load_vector_store(_documents=None):
     return None
 
 # ---------- Streamlit UI ----------
-def main():
-    st.set_page_config(page_title="AI Fisheries Manager", page_icon="🐟")
 
-    # ---- Authentication gate (login page before main UI) ----
+def _is_admin() -> bool:
+    """Check if the current authenticated user has the admin role."""
+    return st.session_state.get("auth", {}).get("role") == "admin"
+
+
+def _show_feedback_ui() -> bool:
+    """Determine whether to show feedback UI to the current user."""
+    if APP_ARGS.mode == "production":
+        return _is_admin()
+    return True  # In test mode everyone sees feedback
+
+
+def _render_sidebar_admin(auth_state: dict):
+    """Render sidebar sections visible only to admins."""
+
+    st.header("Documents")
+
+    # --- Upload supplementary documents ---
+    upload_label = (
+        "Upload supplementary PDFs"
+        if APP_ARGS.docs_dir
+        else "Upload PDF files then click 'Submit & Process'"
+    )
+    pdf_docs = st.file_uploader(upload_label, type=["pdf"], accept_multiple_files=True)
+
+    if st.button("Submit & Process", type="primary", help="Extract, chunk, and index PDFs"):
+        if not pdf_docs:
+            st.error("Please upload at least one PDF.")
+        else:
+            with st.spinner("Extracting & indexing..."):
+                try:
+                    st.info(f"Extracting {len(pdf_docs)} PDF file(s)...")
+                    raw_docs = get_docs_with_meta(pdf_docs)
+                    if not raw_docs:
+                        st.error("Failed to extract text content from PDFs.")
+                    else:
+                        st.success(f"Successfully extracted {len(raw_docs)} page(s)")
+
+                        splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=1800,
+                            chunk_overlap=250,
+                            length_function=len,
+                        )
+                        chunks = splitter.split_documents(raw_docs)
+                        st.info(f"Documents split into {len(chunks)} chunk(s)")
+
+                        if os.path.isdir(INDEX_DIR):
+                            shutil.rmtree(INDEX_DIR, ignore_errors=True)
+                        build_or_load_vector_store.clear()
+
+                        vs = build_or_load_vector_store(chunks)
+                        if vs is None:
+                            st.error("Index building failed. Please check error messages and retry.")
+                        else:
+                            st.success("Index built successfully!")
+                            save_document_metadata(pdf_docs, len(raw_docs), len(chunks))
+                            st.info("Index is ready! Ask questions in the main area.")
+                except Exception as e:
+                    st.error(f"Processing error: {str(e)}")
+                    import traceback
+                    st.error(f"Detailed error:\n```\n{traceback.format_exc()}\n```")
+
+    st.divider()
+
+    # --- Feedback statistics (admin only) ---
+    feedback_stats = analyze_feedback()
+    if feedback_stats and feedback_stats.get("total_feedback", 0) > 0:
+        st.caption("**Feedback Statistics:**")
+        if feedback_stats.get("positive_rate") is not None:
+            rate = feedback_stats["positive_rate"]
+            st.caption(
+                f"Positive rate: {rate:.1%} "
+                f"({feedback_stats.get('thumbs_up', 0)} 👍 / "
+                f"{feedback_stats.get('thumbs_down', 0)} 👎)"
+            )
+        if feedback_stats.get("average_rating") is not None:
+            st.caption(f"Average rating: {feedback_stats['average_rating']:.2f}/5")
+        st.caption(f"Total feedback: {feedback_stats['total_feedback']}")
+        st.divider()
+
+    # --- System parameters (admin only) ---
+    params = load_system_params()
+    with st.expander("System Parameters", expanded=False):
+        st.json(params)
+
+    st.divider()
+
+    # --- Index status / document metadata ---
+    _render_index_status()
+
+
+def _render_index_status():
+    """Show index and document metadata in the sidebar."""
+    index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(
+        os.path.join(INDEX_DIR, "index.faiss")
+    )
+    if index_exists:
+        metadata = load_document_metadata()
+        if metadata:
+            st.caption("**Indexed documents:**")
+            doc_info = [
+                f"• {doc['name']} ({doc.get('size_mb', 0)} MB)"
+                for doc in metadata.get("documents", [])
+            ]
+            if doc_info:
+                for info in doc_info[:3]:
+                    st.caption(info)
+                if len(doc_info) > 3:
+                    st.caption(f"... and {len(doc_info) - 3} more document(s)")
+                st.caption(
+                    f"{metadata.get('page_count', 0)} page(s) | "
+                    f"{metadata.get('chunk_count', 0)} chunk(s)"
+                )
+            else:
+                st.caption("FAISS index detected")
+        else:
+            st.caption("FAISS index detected")
+    else:
+        st.caption("No index yet.")
+
+
+def main():
+    st.set_page_config(page_title="AI Fisheries Manager", page_icon=None)
+
+    # ---- Authentication gate ----
     require_login()
 
-    # From here on, the user is authenticated
     auth_state = st.session_state.get("auth", {})
+    user_role = auth_state.get("role", "user")
+    is_admin = _is_admin()
 
-    st.title("AI Fisheries Manager :fish:")
+    st.title("AI Fisheries Manager")
     st.image("https://pingla.org.au/images/Pingala_Logo_option_7.png", width=300)
 
-    # Sidebar: upload and build index
+    if APP_ARGS.mode == "production" and APP_ARGS.docs_dir:
+        st.caption("Production mode — core documents pre-loaded")
+    elif APP_ARGS.mode == "test":
+        st.caption("Test / development mode")
+
+    # ---- Load core documents from --docs-dir if provided ----
+    load_core_documents_if_needed()
+
+    # ---- Sidebar ----
     with st.sidebar:
-        # Show current user + logout control
+        # User info + logout
         if auth_state.get("is_authenticated"):
             st.markdown(f"**Logged in as:** `{auth_state.get('username', '')}`")
-            role = auth_state.get("role")
-            if role:
-                st.caption(f"Role: {role}")
+            st.caption(f"Role: {user_role}")
             if st.button("Log out", key="logout_button"):
-                # Clear auth state and rerun to show login page
                 st.session_state["auth"] = {
                     "is_authenticated": False,
                     "username": None,
@@ -1049,168 +1340,58 @@ def main():
 
         st.divider()
 
-        st.header("Documents")
-        pdf_docs = st.file_uploader(
-            "Upload PDF files then click 'Submit & Process'",
-            type=["pdf"],
-            accept_multiple_files=True,
-        )
-
-        if st.button("Submit & Process", type="primary", help="Extract, chunk, and index PDFs"):
-            if not pdf_docs:
-                st.error("Please upload at least one PDF.")
-            else:
-                with st.spinner("Extracting & indexing..."):
-                    try:
-                        # Extract documents
-                        st.info(f"Extracting {len(pdf_docs)} PDF file(s)...")
-                        raw_docs = get_docs_with_meta(pdf_docs)
-                        if not raw_docs:
-                            st.error("Failed to extract text content from PDFs.")
-                        else:
-                            st.success(f"Successfully extracted {len(raw_docs)} page(s)")
-
-                            # Split documents
-                            # Smaller chunks improve retrieval precision by focusing on single topics
-                            splitter = RecursiveCharacterTextSplitter(
-                                chunk_size=1800,   # Reduced from 2500 for better precision
-                                chunk_overlap=250, # Maintain cross-chunk context
-                                length_function=len,
-                            )
-                            chunks = splitter.split_documents(raw_docs)
-                            st.info(f"Documents split into {len(chunks)} chunk(s)")
-
-                            # Rebuild index: clear old directory and cache first
-                            if os.path.isdir(INDEX_DIR):
-                                shutil.rmtree(INDEX_DIR, ignore_errors=True)
-
-                            # Clear Streamlit cache to ensure new index is used on next load
-                            build_or_load_vector_store.clear()
-
-                            # Before building index, display small gray text hint in main area
-                            if 'index_building_placeholder' in st.session_state:
-                                st.session_state.index_building_placeholder.markdown(
-                                    f'<p style="font-size: 0.85em; color: #666666; margin: 0.3em 0;">Generating vector index for {len(chunks)} document chunks...</p>\n'
-                                    f'<p style="font-size: 0.85em; color: #666666; margin: 0.3em 0;">This may take 10-30 minutes. Please keep the page open and do not refresh.</p>',
-                                    unsafe_allow_html=True
-                                )
-
-                            # Build vector index
-                            vs = build_or_load_vector_store(chunks)
-                            if vs is None:
-                                st.error("Index building failed. Please check error messages and retry.")
-                                # Also clear hint if build fails
-                                if 'index_building_placeholder' in st.session_state:
-                                    st.session_state.index_building_placeholder.empty()
-                            else:
-                                st.success("Index built successfully! You can now start asking questions.")
-                                # Save document metadata for next use
-                                save_document_metadata(pdf_docs, len(raw_docs), len(chunks))
-                                # Inform user they can ask questions in Q&A area
-                                st.info("Index is ready! You can now ask questions in the main area.")
-                                # Index build complete but don't clear hint yet, wait until answer is generated
-                    except Exception as e:
-                        st.error(f"Processing error: {str(e)}")
-                        import traceback
-                        st.error(f"Detailed error:\n```\n{traceback.format_exc()}\n```")
-
-        st.divider()
-
-        # Display feedback statistics (if available)
-        feedback_stats = analyze_feedback()
-        if feedback_stats and feedback_stats.get("total_feedback", 0) > 0:
-            st.caption("**Feedback Statistics:**")
-            if feedback_stats.get("positive_rate") is not None:
-                positive_rate = feedback_stats["positive_rate"]
-                st.caption(f"Positive rate: {positive_rate:.1%} ({feedback_stats.get('thumbs_up', 0)} 👍 / {feedback_stats.get('thumbs_down', 0)} 👎)")
-            if feedback_stats.get("average_rating") is not None:
-                st.caption(f"Average rating: {feedback_stats['average_rating']:.2f}/5")
-            st.caption(f"Total feedback: {feedback_stats['total_feedback']}")
-            st.divider()
-
-        # More accurate index status check
-        index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(os.path.join(INDEX_DIR, "index.faiss"))
-
-        # Display processed document information
-        if index_exists:
-            metadata = load_document_metadata()
-            if metadata:
-                st.caption("**Previously processed documents:**")
-                doc_info = []
-                for doc in metadata.get("documents", []):
-                    doc_info.append(f"• {doc['name']} ({doc.get('size_mb', 0)} MB)")
-
-                if doc_info:
-                    # Display document list (show max 3, show count if more exist)
-                    display_count = min(3, len(doc_info))
-                    for info in doc_info[:display_count]:
-                        st.caption(info)
-
-                    if len(doc_info) > display_count:
-                        st.caption(f"... and {len(doc_info) - display_count} more document(s)")
-
-                    # Display statistics
-                    st.caption(f"{metadata.get('page_count', 0)} page(s) | {metadata.get('chunk_count', 0)} chunk(s)")
-                else:
-                    st.caption("FAISS index detected")
-            else:
-                st.caption("FAISS index detected")
+        if is_admin:
+            _render_sidebar_admin(auth_state)
         else:
-            st.caption("No index yet. Please upload PDFs and build the index.")
+            # Regular user sidebar: only show index status
+            if APP_ARGS.docs_dir:
+                st.caption("Core documents are pre-loaded by the administrator.")
+            else:
+                st.caption("Please ask the administrator to upload documents.")
+            _render_index_status()
 
-    # Main area: Q&A
-    # Check index status
-    index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(os.path.join(INDEX_DIR, "index.faiss"))
+    # ---- Main area: Q&A ----
+    index_exists = os.path.isdir(INDEX_DIR) and os.path.exists(
+        os.path.join(INDEX_DIR, "index.faiss")
+    )
 
-    # Initialize conversation history
     init_conversation_history()
 
-    # Create placeholder for displaying index build hint (will be cleared after answer is generated)
-    if 'index_building_placeholder' not in st.session_state:
-        st.session_state.index_building_placeholder = st.empty()
-
-    # Initialize input value (if not already)
     if 'user_question' not in st.session_state:
         st.session_state.user_question = ""
 
-    # Check if input box needs to be cleared (triggered by Clear button)
-    # Must check and clear before creating widget
     if 'clear_input' in st.session_state and st.session_state.clear_input:
-        # Delete related session_state key so widget will be reset
         if 'question_input' in st.session_state:
             del st.session_state.question_input
         st.session_state.user_question = ""
-        st.session_state.clear_input = False  # Reset flag
+        st.session_state.clear_input = False
 
-    # Use key parameter to ensure input box always displays
-    # Note: When using key, value parameter is ignored, widget uses value from session_state
     user_q = st.text_input(
         "Ask the fisheries manager a question",
         key="question_input",
-        placeholder="Enter your question here..."
+        placeholder="Enter your question here...",
     )
 
-    # Update value in session_state (for tracking)
     if user_q != st.session_state.user_question:
         st.session_state.user_question = user_q
 
-    # Add action buttons (clear input, clear history)
     col1, col2, col3 = st.columns([5, 1, 1])
     with col2:
         if st.button("Clear", key="clear_button"):
-            # Set flag to clear input box on next run
             st.session_state.clear_input = True
             st.rerun()
     with col3:
         if st.button("Clear History", key="clear_history_button"):
-            # Clear conversation history
             if 'conversation_history' in st.session_state:
                 st.session_state.conversation_history = []
             st.rerun()
 
-    # Display conversation history (if available)
+    # Conversation history (all users can see their own)
     if 'conversation_history' in st.session_state and len(st.session_state.conversation_history) > 0:
-        with st.expander(f"Conversation History ({len(st.session_state.conversation_history)} turns)", expanded=False):
+        with st.expander(
+            f"Conversation History ({len(st.session_state.conversation_history)} turns)",
+            expanded=False,
+        ):
             for i, entry in enumerate(st.session_state.conversation_history, 1):
                 st.markdown(f"**Turn {i}:**")
                 st.markdown(f"**Q:** {entry['question']}")
@@ -1222,82 +1403,70 @@ def main():
 
     if user_q and user_q.strip():
         if not index_exists:
-            st.warning("No index found. Please upload PDFs and click 'Submit & Process' first.")
-            st.info("If you just processed documents, please wait for the index building to complete (you should see a success message).")
+            if is_admin:
+                st.warning("No index found. Upload PDFs and click 'Submit & Process'.")
+            else:
+                st.warning("No documents indexed yet. Please contact the administrator.")
             return
 
         with st.spinner("Retrieving & answering..."):
-            vs = build_or_load_vector_store()  # Load existing index
+            vs = build_or_load_vector_store()
             if vs is None:
-                st.warning("Index not ready. Please upload PDFs and click 'Submit & Process' first.")
-                # Try clearing cache and reloading
                 build_or_load_vector_store.clear()
                 vs = build_or_load_vector_store()
                 if vs is None:
-                    st.error("Failed to load index. Please rebuild the index by clicking 'Submit & Process' again.")
-                st.stop()
+                    st.error("Failed to load index.")
+                    st.stop()
 
-            # Pass conversation history to answer_question
             conversation_history = st.session_state.get('conversation_history', [])
             answer, sources, timing_info = answer_question(vs, user_q, conversation_history)
-
-            # Add to conversation history
             add_to_history(user_q, answer, sources, timing_info)
-
-        # After answer is generated, clear index build hint
-        if 'index_building_placeholder' in st.session_state:
-            st.session_state.index_building_placeholder.empty()
 
         st.markdown("**Reply:**")
         st.write(answer)
 
-        # Display time statistics
-        retrieval_time_str = f"{timing_info['retrieval_time']:.2f}s"
-        generation_time_str = f"{timing_info['generation_time']:.2f}s"
-        total_time_str = f"{timing_info['total_time']:.2f}s"
-
-        st.caption(f"**Time:** Retrieval: {retrieval_time_str} | Generation: {generation_time_str} | **Total: {total_time_str}**")
+        # Timing info (admin always sees; regular users see in test mode)
+        if is_admin or APP_ARGS.mode == "test":
+            st.caption(
+                f"**Time:** Retrieval: {timing_info['retrieval_time']:.2f}s | "
+                f"Generation: {timing_info['generation_time']:.2f}s | "
+                f"**Total: {timing_info['total_time']:.2f}s**"
+            )
 
         if sources:
             src_text = format_sources(sources)
             st.caption(f"**Sources:** {src_text}")
 
-        # Add feedback buttons
-        st.markdown("---")
-        st.markdown("**Was this answer helpful?**")
+        # Feedback UI (controlled by role and mode)
+        if _show_feedback_ui():
+            st.markdown("---")
+            st.markdown("**Was this answer helpful?**")
 
-        # Use unique key to avoid duplicate submissions
-        current_turn = len(st.session_state.get('conversation_history', []))
-        feedback_saved_key = f"feedback_saved_{current_turn}"
+            current_turn = len(st.session_state.get('conversation_history', []))
+            feedback_saved_key = f"feedback_saved_{current_turn}"
 
-        # Check if feedback already submitted
-        if feedback_saved_key not in st.session_state:
-            st.session_state[feedback_saved_key] = False
+            if feedback_saved_key not in st.session_state:
+                st.session_state[feedback_saved_key] = False
 
-        # Use column layout for feedback buttons
-        fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
+            fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
 
-        if not st.session_state[feedback_saved_key]:
-            with fb_col1:
-                feedback_key = f"thumbs_up_{current_turn}"
-                if st.button("👍", key=feedback_key):
-                    save_feedback(user_q, answer, sources, 1, "thumbs")
-                    st.session_state[feedback_saved_key] = True
-                    # Trigger parameter optimization (async, takes effect on next use)
-                    get_optimized_params()  # Recalculate optimized parameters
-                    st.success("Thank you for your feedback!")
-                    st.rerun()
-            with fb_col2:
-                feedback_key_down = f"thumbs_down_{current_turn}"
-                if st.button("👎", key=feedback_key_down):
-                    save_feedback(user_q, answer, sources, 0, "thumbs")
-                    st.session_state[feedback_saved_key] = True
-                    # Trigger parameter optimization (async, takes effect on next use)
-                    get_optimized_params()  # Recalculate optimized parameters
-                    st.info("Thank you for your feedback. We'll use this to improve.")
-                    st.rerun()
-        else:
-            st.caption("Feedback submitted. Thank you!")
+            if not st.session_state[feedback_saved_key]:
+                with fb_col1:
+                    if st.button("👍", key=f"thumbs_up_{current_turn}"):
+                        save_feedback(user_q, answer, sources, 1, "thumbs")
+                        st.session_state[feedback_saved_key] = True
+                        get_optimized_params()
+                        st.success("Thank you for your feedback!")
+                        st.rerun()
+                with fb_col2:
+                    if st.button("👎", key=f"thumbs_down_{current_turn}"):
+                        save_feedback(user_q, answer, sources, 0, "thumbs")
+                        st.session_state[feedback_saved_key] = True
+                        get_optimized_params()
+                        st.info("Thank you for your feedback. We'll use this to improve.")
+                        st.rerun()
+            else:
+                st.caption("Feedback submitted. Thank you!")
 
 
 if __name__ == "__main__":

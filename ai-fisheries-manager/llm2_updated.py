@@ -331,15 +331,17 @@ def rerank_documents(query: str, docs: List, top_k: int = 10) -> List:
         return docs[:top_k]
 
 # ---------- Feedback Collection and Parameter Optimization ----------
-def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_value: int, feedback_type: str = "rating"):
-    """Save user feedback to a JSON file
+def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_value: int,
+                  feedback_type: str = "rating", comment: str = ""):
+    """Save user feedback to a JSON file.
 
     Args:
         question: User's question
         answer: System's answer
         sources: List of source documents
-        feedback_value: Feedback value (1-5 rating, 1=👍, 0=👎)
-        feedback_type: Type of feedback ("rating" or "thumbs")
+        feedback_value: 1=👍, 0=👎  (or 1-5 for rating type)
+        feedback_type: "thumbs" or "rating"
+        comment: Optional free-text comment from the user
     """
     try:
         feedback_data = []
@@ -350,18 +352,20 @@ def save_feedback(question: str, answer: str, sources: List[Tuple], feedback_val
             except:
                 feedback_data = []
 
+        auth_state = st.session_state.get("auth", {})
         entry = {
             "question": question,
-            "answer": answer[:500],  # Limit answer length
+            "answer": answer[:500],
             "sources": sources,
             "feedback_value": feedback_value,
             "feedback_type": feedback_type,
-            "timestamp": datetime.now().isoformat()
+            "comment": comment.strip(),
+            "username": auth_state.get("username", "anonymous"),
+            "timestamp": datetime.now().isoformat(),
         }
 
         feedback_data.append(entry)
 
-        # Save to file
         with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
             json.dump(feedback_data, f, indent=2, ensure_ascii=False)
 
@@ -658,6 +662,93 @@ def load_document_metadata():
     except Exception as e:
         st.warning(f"Failed to load document metadata: {str(e)}")
     return None
+
+
+def append_document_metadata(pdf_files, extra_pages: int, extra_chunks: int):
+    """
+    Merge newly uploaded documents into the existing metadata record.
+    If no metadata exists yet, creates a fresh one.
+    """
+    try:
+        os.makedirs(INDEX_DIR, exist_ok=True)
+        existing = load_document_metadata() or {
+            "processed_time": datetime.now().isoformat(),
+            "page_count": 0,
+            "chunk_count": 0,
+            "documents": [],
+        }
+        existing["page_count"] = existing.get("page_count", 0) + extra_pages
+        existing["chunk_count"] = existing.get("chunk_count", 0) + extra_chunks
+        existing["processed_time"] = datetime.now().isoformat()
+        existing_names = {d["name"] for d in existing.get("documents", [])}
+        for pdf_file in pdf_files:
+            file_name = getattr(pdf_file, "name", "uploaded.pdf")
+            if file_name in existing_names:
+                continue  # skip duplicates
+            file_size = getattr(pdf_file, "size", 0)
+            existing.setdefault("documents", []).append({
+                "name": file_name,
+                "size_mb": round(file_size / (1024 * 1024), 2) if file_size > 0 else 0,
+            })
+        with open(METADATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.warning(f"Failed to update document metadata: {str(e)}")
+        return False
+
+
+def merge_uploads_into_index(pdf_files) -> bool:
+    """
+    Extract text from *pdf_files* (Streamlit UploadedFile objects), chunk them,
+    and MERGE the resulting embeddings into the existing FAISS index.
+    If no index exists yet the function builds one from scratch.
+    Returns True on success, False on failure.
+    """
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model=EMBED_MODEL)
+    except Exception as e:
+        st.error(f"Embeddings initialisation failed: {e}")
+        return False
+
+    st.info(f"Extracting {len(pdf_files)} PDF file(s)...")
+    raw_docs = get_docs_with_meta(pdf_files)
+    if not raw_docs:
+        st.error("No text could be extracted from the uploaded PDFs.")
+        return False
+    st.success(f"Extracted {len(raw_docs)} page(s).")
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1800, chunk_overlap=250, length_function=len
+    )
+    new_chunks = splitter.split_documents(raw_docs)
+    st.info(f"Split into {len(new_chunks)} chunk(s). Embedding & merging...")
+
+    try:
+        if os.path.isdir(INDEX_DIR) and os.path.exists(
+            os.path.join(INDEX_DIR, "index.faiss")
+        ):
+            # Load the current index and merge new vectors into it
+            existing_vs = FAISS.load_local(
+                INDEX_DIR, embeddings, allow_dangerous_deserialization=False
+            )
+            new_vs = FAISS.from_documents(new_chunks, embeddings)
+            existing_vs.merge_from(new_vs)
+            existing_vs.save_local(INDEX_DIR)
+        else:
+            # No existing index — build fresh
+            new_vs = FAISS.from_documents(new_chunks, embeddings)
+            new_vs.save_local(INDEX_DIR)
+
+        # Refresh the cached resource so queries use the updated index
+        build_or_load_vector_store.clear()
+
+        append_document_metadata(pdf_files, len(raw_docs), len(new_chunks))
+        return True
+    except Exception as e:
+        import traceback
+        st.error(f"Merge failed: {e}\n```\n{traceback.format_exc()}\n```")
+        return False
 
 # ---------- Helper Functions ----------
 def get_docs_with_meta(pdf_files):
@@ -1188,10 +1279,8 @@ def _is_admin() -> bool:
 
 
 def _show_feedback_ui() -> bool:
-    """Determine whether to show feedback UI to the current user."""
-    if APP_ARGS.mode == "production":
-        return _is_admin()
-    return True  # In test mode everyone sees feedback
+    """Feedback is shown to every logged-in user after every response."""
+    return True
 
 
 def _render_sidebar_admin(auth_state: dict):
@@ -1199,50 +1288,52 @@ def _render_sidebar_admin(auth_state: dict):
 
     st.header("Documents")
 
-    # --- Upload supplementary documents ---
-    upload_label = (
-        "Upload supplementary PDFs"
-        if APP_ARGS.docs_dir
-        else "Upload PDF files then click 'Submit & Process'"
-    )
-    pdf_docs = st.file_uploader(upload_label, type=["pdf"], accept_multiple_files=True)
+    # --- Core (hardwired) documents status ---
+    import glob as glob_mod
+    core_pdfs = sorted(glob_mod.glob(os.path.join(CORE_DOCS_DIR, "*.pdf")))
+    if core_pdfs:
+        with st.expander(f"Core documents ({len(core_pdfs)} files)", expanded=False):
+            for p in core_pdfs:
+                st.caption(f"• {os.path.basename(p)}")
+        st.caption(
+            "These documents are hardwired into the app and loaded automatically. "
+            "To add a new core document, place the PDF in the `core_documents/` folder."
+        )
+    else:
+        st.caption(
+            "No core documents found. Place PDFs in `core_documents/` to hardwire them."
+        )
 
-    if st.button("Submit & Process", type="primary", help="Extract, chunk, and index PDFs"):
+    st.divider()
+
+    # --- Upload supplementary documents (merged into core index, not replacing it) ---
+    st.subheader("Add supplementary PDFs")
+    st.caption("Uploaded documents are merged into the existing index — core docs are preserved.")
+    pdf_docs = st.file_uploader(
+        "Select PDFs to add", type=["pdf"], accept_multiple_files=True
+    )
+
+    if st.button("Submit & Process", type="primary", help="Embed and merge PDFs into the index"):
         if not pdf_docs:
             st.error("Please upload at least one PDF.")
         else:
-            with st.spinner("Extracting & indexing..."):
-                try:
-                    st.info(f"Extracting {len(pdf_docs)} PDF file(s)...")
-                    raw_docs = get_docs_with_meta(pdf_docs)
-                    if not raw_docs:
-                        st.error("Failed to extract text content from PDFs.")
-                    else:
-                        st.success(f"Successfully extracted {len(raw_docs)} page(s)")
+            with st.spinner("Extracting & merging into index..."):
+                success = merge_uploads_into_index(pdf_docs)
+                if success:
+                    st.success("Documents merged into index! Ask questions in the main area.")
 
-                        splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=1800,
-                            chunk_overlap=250,
-                            length_function=len,
-                        )
-                        chunks = splitter.split_documents(raw_docs)
-                        st.info(f"Documents split into {len(chunks)} chunk(s)")
-
-                        if os.path.isdir(INDEX_DIR):
-                            shutil.rmtree(INDEX_DIR, ignore_errors=True)
-                        build_or_load_vector_store.clear()
-
-                        vs = build_or_load_vector_store(chunks)
-                        if vs is None:
-                            st.error("Index building failed. Please check error messages and retry.")
-                        else:
-                            st.success("Index built successfully!")
-                            save_document_metadata(pdf_docs, len(raw_docs), len(chunks))
-                            st.info("Index is ready! Ask questions in the main area.")
-                except Exception as e:
-                    st.error(f"Processing error: {str(e)}")
-                    import traceback
-                    st.error(f"Detailed error:\n```\n{traceback.format_exc()}\n```")
+    # --- Admin-only: rebuild index from scratch ---
+    with st.expander("Danger zone", expanded=False):
+        st.caption("Rebuilding wipes the index and reloads only the core documents.")
+        if st.button("Rebuild index from core docs", type="secondary"):
+            if os.path.isdir(INDEX_DIR):
+                shutil.rmtree(INDEX_DIR, ignore_errors=True)
+            build_or_load_vector_store.clear()
+            loaded = load_core_documents_if_needed()
+            if loaded:
+                st.success("Index rebuilt from core documents.")
+            else:
+                st.warning("No core documents found to rebuild from.")
 
     st.divider()
 
@@ -1343,11 +1434,15 @@ def main():
         if is_admin:
             _render_sidebar_admin(auth_state)
         else:
-            # Regular user sidebar: only show index status
-            if APP_ARGS.docs_dir:
-                st.caption("Core documents are pre-loaded by the administrator.")
+            # Regular user sidebar: read-only view of what is indexed
+            import glob as glob_mod
+            core_pdfs = glob_mod.glob(os.path.join(CORE_DOCS_DIR, "*.pdf"))
+            if core_pdfs:
+                st.caption(
+                    f"{len(core_pdfs)} core document(s) are pre-loaded and ready to query."
+                )
             else:
-                st.caption("Please ask the administrator to upload documents.")
+                st.caption("Core documents are pre-loaded by the administrator.")
             _render_index_status()
 
     # ---- Main area: Q&A ----
@@ -1437,33 +1532,52 @@ def main():
             src_text = format_sources(sources)
             st.caption(f"**Sources:** {src_text}")
 
-        # Feedback UI (controlled by role and mode)
+        # Feedback UI — shown to every user after every response
         if _show_feedback_ui():
             st.markdown("---")
             st.markdown("**Was this answer helpful?**")
 
             current_turn = len(st.session_state.get('conversation_history', []))
             feedback_saved_key = f"feedback_saved_{current_turn}"
+            feedback_vote_key  = f"feedback_vote_{current_turn}"
 
             if feedback_saved_key not in st.session_state:
                 st.session_state[feedback_saved_key] = False
-
-            fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
+            if feedback_vote_key not in st.session_state:
+                st.session_state[feedback_vote_key] = None  # None | 1 | 0
 
             if not st.session_state[feedback_saved_key]:
+                # Step 1 — thumb vote
+                fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
                 with fb_col1:
                     if st.button("👍", key=f"thumbs_up_{current_turn}"):
-                        save_feedback(user_q, answer, sources, 1, "thumbs")
-                        st.session_state[feedback_saved_key] = True
-                        get_optimized_params()
-                        st.success("Thank you for your feedback!")
-                        st.rerun()
+                        st.session_state[feedback_vote_key] = 1
                 with fb_col2:
                     if st.button("👎", key=f"thumbs_down_{current_turn}"):
-                        save_feedback(user_q, answer, sources, 0, "thumbs")
+                        st.session_state[feedback_vote_key] = 0
+
+                # Step 2 — once a thumb is selected, show comment box + submit
+                if st.session_state[feedback_vote_key] is not None:
+                    vote = st.session_state[feedback_vote_key]
+                    vote_label = "👍 Helpful" if vote == 1 else "👎 Not helpful"
+                    st.caption(f"You selected: **{vote_label}**")
+
+                    comment = st.text_area(
+                        "Add a comment (optional)",
+                        placeholder="Tell us what was good or how we could improve...",
+                        key=f"feedback_comment_{current_turn}",
+                        max_chars=500,
+                        height=80,
+                    )
+
+                    if st.button("Submit feedback", type="primary", key=f"submit_feedback_{current_turn}"):
+                        save_feedback(user_q, answer, sources, vote, "thumbs", comment)
                         st.session_state[feedback_saved_key] = True
                         get_optimized_params()
-                        st.info("Thank you for your feedback. We'll use this to improve.")
+                        if vote == 1:
+                            st.success("Thank you for your feedback!")
+                        else:
+                            st.info("Thank you — we'll use this to improve.")
                         st.rerun()
             else:
                 st.caption("Feedback submitted. Thank you!")
